@@ -10,7 +10,7 @@ import {
   TrendUp,
   Bank,
   Wallet,
-} from '@phosphor-icons/react'
+} from '@phosphor-icons/react/ssr'
 
 export function HeroSection() {
   const [mounted, setMounted] = useState(false)

@@ -1,6 +1,6 @@
 'use client'
 
-import { TrendUp, TrendDown, Wallet, Coins } from '@phosphor-icons/react'
+import { TrendUp, TrendDown, Wallet, Coins } from '@phosphor-icons/react/ssr'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAPAXStore, formatCurrency, formatWeight } from '@/lib/store'
 

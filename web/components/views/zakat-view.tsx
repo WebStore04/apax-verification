@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Calculator, Info, CheckCircle, Coins, TrendUp, Heart } from '@phosphor-icons/react'
+import { Calculator, Info, CheckCircle, Coins, TrendUp, Heart } from '@phosphor-icons/react/ssr'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'

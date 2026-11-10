@@ -9,7 +9,7 @@ import {
   Gear,
   Question,
   SignOut
-} from '@phosphor-icons/react'
+} from '@phosphor-icons/react/ssr'
 import Image from 'next/image'
 
 import {

@@ -5,7 +5,7 @@ import {
   IdentificationCard,
   Coin,
   Package,
-} from '@phosphor-icons/react'
+} from '@phosphor-icons/react/ssr'
 
 const steps = [
   {
