@@ -232,7 +232,7 @@ export function listSessions(): VerifySession[] {
     seen.add(session.ip);
     collapseMachine(session);
   }
-  return [...sessions.values()].sort((a, b) => b.lastSeenAt - a.lastSeenAt);
+  return [...sessions.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
 }
 
 export function markChecked(id: string): VerifySession | undefined {

