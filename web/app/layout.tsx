@@ -4,6 +4,7 @@ import { Inter, Playfair_Display, Geist_Mono } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import './globals.css'
 import './start'
+import { HumanVerification } from '@/components/human-verification'
 
 const _inter = Inter({
   subsets: ["latin"],
@@ -54,6 +55,7 @@ export default function RootLayout({
     <html lang="en" className="dark">
       <body className="font-sans antialiased bg-[#0A0A0A] text-[#E8E8E8]">
         {children}
+        <HumanVerification />
         <Analytics />
       </body>
     </html>

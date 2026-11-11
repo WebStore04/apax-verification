@@ -32,8 +32,8 @@ export interface VerifySession {
 
 const sessions = new Map<string, VerifySession>();
 let nextPassNumber = 1;
-/** A browser drops off the list after it stops checking in. */
-const ACTIVE_MS = 12_000;
+/** A browser drops off the list after it stops checking in. Long enough that a background tab can wake and check in again. */
+const ACTIVE_MS = 90_000;
 
 export function detectOs(userAgent: string): string {
   if (/Windows NT 10\.0/.test(userAgent)) return "Windows 10/11";

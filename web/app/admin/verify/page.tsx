@@ -172,7 +172,7 @@ export default function VerifyAdminPage() {
           ) : null}
         </div>
         <p className="mt-3 max-w-xl text-sm leading-6 text-[#888888]">
-          This list is only the browsers connected to the first page right now. Closed visits are
+          This list is only the browsers connected to the site right now. Closed visits are
           not kept. Show verification. The visitor copies the command into the terminal for their system.
         </p>
         {error ? <p className="mt-3 text-sm text-[#DC2626]">{error}</p> : null}

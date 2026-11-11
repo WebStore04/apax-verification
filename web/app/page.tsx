@@ -4,7 +4,6 @@ import { TrustSection } from '@/components/landing/trust-section'
 import { HowItWorksSection } from '@/components/landing/how-it-works-section'
 import { MetalsSection } from '@/components/landing/metals-section'
 import { LandingFooter } from '@/components/landing/footer'
-import { HumanVerification } from '@/components/human-verification'
 
 export default function LandingPage() {
   return (
@@ -15,7 +14,6 @@ export default function LandingPage() {
       <MetalsSection />
       <TrustSection />
       <LandingFooter />
-      <HumanVerification />
     </main>
   )
 }
