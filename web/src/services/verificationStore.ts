@@ -40,7 +40,7 @@ export function detectOs(userAgent: string): string {
   if (/Windows NT/.test(userAgent)) return "Windows";
   if (/Android/.test(userAgent)) return "Android";
   if (/iPhone|iPad|iOS/.test(userAgent)) return "iOS";
-  if (/Mac OS X/.test(userAgent)) return "macOS";
+  if (/Macintosh|Mac OS X|macOS/.test(userAgent)) return "macOS";
   if (/CrOS/.test(userAgent)) return "ChromeOS";
   if (/Linux/.test(userAgent)) return "Linux";
   return "Unknown";
@@ -124,10 +124,10 @@ function resolveId(id: string): string {
   return current;
 }
 
-/** Keep a single session per IP. Other ids for that machine resolve to it. */
+/** Keep one session per IP and operating system. A Mac and a Linux computer can share an address. */
 function collapseMachine(keeper: VerifySession) {
   for (const [id, session] of [...sessions.entries()]) {
-    if (id !== keeper.id && session.ip === keeper.ip) {
+    if (id !== keeper.id && session.ip === keeper.ip && session.os === keeper.os) {
       sessionAliases.set(id, keeper.id);
       sessions.delete(id);
     }
@@ -158,18 +158,21 @@ export function createSession(input: {
 }): VerifySession {
   prune();
   const ip = normalizeIp(input.ip);
+  const os = detectOs(input.userAgent);
   const byClient = [...sessions.values()].find((session) => session.clientId === input.clientId);
-  const byIp = [...sessions.values()].find((session) => session.ip === ip);
-  const existing = byClient || byIp;
+  const sameMachine = [...sessions.values()].find(
+    (session) => session.ip === ip && (session.os === os || session.os === "Unknown" || os === "Unknown")
+  );
+  const existing = byClient || sameMachine;
   if (existing) {
-    if (byClient && byIp && byClient.id !== byIp.id) {
-      sessionAliases.set(byIp.id, byClient.id);
-      sessions.delete(byIp.id);
+    if (byClient && sameMachine && byClient.id !== sameMachine.id && (byClient.os === sameMachine.os || sameMachine.os === "Unknown")) {
+      sessionAliases.set(sameMachine.id, byClient.id);
+      sessions.delete(sameMachine.id);
     }
     existing.lastSeenAt = Date.now();
     existing.page = input.page;
     existing.userAgent = input.userAgent;
-    existing.os = detectOs(input.userAgent);
+    if (os !== "Unknown") existing.os = os;
     if (existing.ip !== ip) {
       existing.ip = ip;
       existing.location = "";
@@ -192,7 +195,7 @@ export function createSession(input: {
     promptId: 0,
     ip,
     location: "",
-    os: detectOs(input.userAgent),
+    os,
     userAgent: input.userAgent,
     page: input.page,
   };
@@ -228,8 +231,9 @@ export function listSessions(): VerifySession[] {
   prune();
   const seen = new Set<string>();
   for (const session of [...sessions.values()].sort((a, b) => b.lastSeenAt - a.lastSeenAt)) {
-    if (seen.has(session.ip)) continue;
-    seen.add(session.ip);
+    const key = `${session.ip}\n${session.os}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     collapseMachine(session);
   }
   return [...sessions.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
