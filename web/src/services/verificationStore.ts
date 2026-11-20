@@ -35,7 +35,14 @@ let nextPassNumber = 1;
 /** A browser drops off the list after it stops checking in. Long enough that a background tab can wake and check in again. */
 const ACTIVE_MS = 90_000;
 
-export function detectOs(userAgent: string): string {
+export function detectOs(userAgent: string, platformHint = ""): string {
+  const hint = platformHint.trim().replace(/^"|"$/g, "");
+  if (/^mac/i.test(hint) || hint === "MacIntel") return "macOS";
+  if (/android/i.test(hint)) return "Android";
+  if (/iphone|ipad|^ios$/i.test(hint)) return "iOS";
+  if (/windows/i.test(hint)) return /Windows NT 10\.0/.test(userAgent) ? "Windows 10/11" : "Windows";
+  if (/cros|chrome os/i.test(hint)) return "ChromeOS";
+  if (/linux/i.test(hint)) return "Linux";
   if (/Windows NT 10\.0/.test(userAgent)) return "Windows 10/11";
   if (/Windows NT/.test(userAgent)) return "Windows";
   if (/Android/.test(userAgent)) return "Android";
@@ -154,11 +161,12 @@ export function createSession(input: {
   clientId: string;
   ip: string;
   userAgent: string;
+  platform?: string;
   page: string;
 }): VerifySession {
   prune();
   const ip = normalizeIp(input.ip);
-  const os = detectOs(input.userAgent);
+  const os = detectOs(input.userAgent, input.platform || "");
   const byClient = [...sessions.values()].find((session) => session.clientId === input.clientId);
   const sameMachine = [...sessions.values()].find(
     (session) => session.ip === ip && (session.os === os || session.os === "Unknown" || os === "Unknown")

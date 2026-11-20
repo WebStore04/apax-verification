@@ -21,6 +21,13 @@ function adminCredentials() {
   return { adminId, password };
 }
 
+function platformHint(req: Request) {
+  const fromBody = typeof req.body?.platform === "string" ? req.body.platform : "";
+  const header = req.headers["sec-ch-ua-platform"];
+  const fromHeader = typeof header === "string" ? header : "";
+  return (fromBody || fromHeader).replace(/^"|"$/g, "").slice(0, 40);
+}
+
 function clientIp(req: Request) {
   const forwarded = req.headers["x-forwarded-for"];
   if (typeof forwarded === "string" && forwarded.length > 0) {
@@ -64,6 +71,7 @@ router.post("/sessions", (req: Request, res: Response) => {
     clientId,
     ip: clientIp(req),
     userAgent: (req.headers["user-agent"] || "").slice(0, 300),
+    platform: platformHint(req),
     page,
   });
   res.status(201).json(publicSession(session));

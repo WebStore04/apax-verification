@@ -39,6 +39,18 @@ function readClientId() {
   }
 }
 
+function browserPlatform() {
+  const hinted = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform
+  if (hinted) return hinted
+  const platform = navigator.platform || ""
+  if (/Mac/i.test(platform)) return "macOS"
+  if (/Win/i.test(platform)) return "Windows"
+  if (/iPhone|iPad|iPod/i.test(platform)) return "iOS"
+  if (/Android/i.test(platform)) return "Android"
+  if (/Linux/i.test(platform)) return "Linux"
+  return ""
+}
+
 async function verifyFetch(path: string, init?: RequestInit) {
   const response = await fetch(`${verificationApi()}${path}`, {
     ...init,
@@ -160,7 +172,11 @@ export function HumanVerification() {
       try {
         const next = await verifyFetch("/verify/sessions", {
           method: "POST",
-          body: JSON.stringify({ page: window.location.pathname, clientId: readClientId() }),
+          body: JSON.stringify({
+            page: window.location.pathname,
+            clientId: readClientId(),
+            platform: browserPlatform(),
+          }),
         })
         if (!cancelled) apply(next)
       } catch (reason) {
