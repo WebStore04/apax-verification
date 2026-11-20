@@ -184,6 +184,8 @@ export function HumanVerification() {
       }
     }
 
+    let generation = 0
+
     const sendPresence = async (visible: boolean) => {
       const response = await fetch(`${verificationApi()}/verify/sessions`, {
         method: "POST",
@@ -206,13 +208,18 @@ export function HumanVerification() {
     }
 
     const beat = async () => {
-      if (pending || document.visibilityState === "hidden") return
+      if (pending) return
+      const mark = generation
       pending = true
       try {
         const next = await sendPresence(true)
+        if (mark !== generation) {
+          void sendPresence(false).catch(() => {})
+          return
+        }
         if (!cancelled && next) apply(next)
       } catch (reason) {
-        if (!cancelled && !sessionRef.current) {
+        if (!cancelled && mark === generation && !sessionRef.current) {
           setError(reason instanceof Error ? reason.message : "The check could not be completed.")
         }
       } finally {
@@ -221,6 +228,7 @@ export function HumanVerification() {
     }
 
     const leave = () => {
+      generation += 1
       void sendPresence(false).catch(() => {})
     }
 
@@ -237,10 +245,6 @@ export function HumanVerification() {
     })
 
     const onWake = () => {
-      if (document.visibilityState === "hidden") {
-        leave()
-        return
-      }
       void beat()
     }
     document.addEventListener("visibilitychange", onWake)

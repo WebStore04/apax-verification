@@ -123,12 +123,11 @@ export function terminalCopy(userAgent: string): TerminalCopy {
   }
 }
 
-/** API origin for this browser. Uses the same hostname as the page, so Cursor and a normal browser reach one server. */
+/** Same origin as the page. The site forwards /verify to the API, so a visitor only needs the page port. */
 export function verificationApi() {
-  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL
-  if (typeof window === "undefined") return "http://localhost:4000"
-  const scheme = window.location.protocol === "https:" ? "https:" : "http:"
-  return `${scheme}//${window.location.hostname}:4000`
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")
+  if (typeof window === "undefined") return "http://127.0.0.1:4000"
+  return window.location.origin
 }
 
 export type PublicVerification = {

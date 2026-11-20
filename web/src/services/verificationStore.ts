@@ -30,7 +30,7 @@ export interface VerifySession {
   os: string;
   userAgent: string;
   page: string;
-  /** False once the visitor leaves the page or hides the tab. */
+  /** False once the visitor closes the page. A tab left open in the background still counts. */
   visible?: boolean;
 }
 
