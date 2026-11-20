@@ -1,6 +1,5 @@
 'use client'
 
-import { useEffect, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
@@ -13,12 +12,6 @@ import {
 } from '@phosphor-icons/react/ssr'
 
 export function HeroSection() {
-  const [mounted, setMounted] = useState(false)
-
-  useEffect(() => {
-    setMounted(true)
-  }, [])
-
   return (
     <section className="relative min-h-screen flex items-center overflow-hidden bg-radial-obsidian">
       {/* Subtle grid pattern - not distracting */}
@@ -37,7 +30,7 @@ export function HeroSection() {
       <div className="container mx-auto px-6 lg:px-8 pt-28 pb-20 relative z-10">
         <div className="grid lg:grid-cols-12 gap-16 items-center">
           {/* Left: Content - spans 7 cols */}
-          <div className={`lg:col-span-7 space-y-10 ${mounted ? 'animate-in fade-in slide-in-from-left-8 duration-700' : 'opacity-0'}`}>
+          <div className="lg:col-span-7 space-y-10">
             {/* Regulatory Badge */}
             <div className="inline-flex items-center gap-3 px-5 py-2.5 rounded-sm border border-[#D4AF37]/20 bg-[#D4AF37]/5">
               <ShieldCheck weight="light" className="w-4 h-4 text-[#D4AF37] icon-bespoke" />
@@ -104,7 +97,7 @@ export function HeroSection() {
           </div>
 
           {/* Right: Visual - spans 5 cols */}
-          <div className={`lg:col-span-5 flex justify-center ${mounted ? 'animate-in fade-in slide-in-from-right-8 duration-700 delay-200' : 'opacity-0'}`}>
+          <div className="lg:col-span-5 flex justify-center">
             <div className="relative">
               {/* Ambient glow */}
               <div className="absolute inset-0 bg-[#D4AF37]/10 rounded-full blur-[80px] scale-90" />

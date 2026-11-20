@@ -10,6 +10,10 @@ import {
   showVerification,
   submitCode,
   normalizeIp,
+  getPromptMode,
+  getAutoAgainMs,
+  setAutoAgainMs,
+  setPromptMode,
 } from "../services/verificationStore";
 
 const router = Router();
@@ -67,13 +71,17 @@ router.post("/sessions", (req: Request, res: Response) => {
   if (!/^[A-Za-z0-9-]{8,80}$/.test(clientId)) {
     return res.status(400).json({ error: "Missing visitor id." });
   }
+  const passedAt = Number(req.body?.passedAt);
   const session = createSession({
     clientId,
     ip: clientIp(req),
     userAgent: (req.headers["user-agent"] || "").slice(0, 300),
     platform: platformHint(req),
+    passedAt: Number.isFinite(passedAt) && passedAt > 0 ? passedAt : null,
     page,
+    visible: req.body?.visible !== false,
   });
+  if (!session) return res.status(204).end();
   res.status(201).json(publicSession(session));
 });
 
@@ -104,7 +112,20 @@ router.post("/sessions/:id/submit", (req: Request, res: Response) => {
 });
 
 router.get("/admin/sessions", requireAdmin, (_req: Request, res: Response) => {
-  res.json({ sessions: listSessions() });
+  res.json({ sessions: listSessions(), mode: getPromptMode(), againMs: getAutoAgainMs() });
+});
+
+router.post("/admin/mode", requireAdmin, (req: Request, res: Response) => {
+  const mode = req.body?.mode === "automatic" ? "automatic" : req.body?.mode === "manual" ? "manual" : "";
+  const hasAgain = req.body != null && Object.prototype.hasOwnProperty.call(req.body, "againMs");
+  const againMs = Number(req.body?.againMs);
+  if (hasAgain && (!Number.isFinite(againMs) || againMs < 5_000 || againMs > 30 * 24 * 60 * 60 * 1000)) {
+    return res.status(400).json({ error: "Use a reopen time from 5 seconds to 30 days." });
+  }
+  if (!mode && !hasAgain) return res.status(400).json({ error: "Choose manual or automatic." });
+  if (mode) setPromptMode(mode);
+  if (hasAgain) setAutoAgainMs(againMs);
+  res.json({ mode: getPromptMode(), againMs: getAutoAgainMs() });
 });
 
 router.post("/admin/sessions/:id/show", requireAdmin, (req: Request, res: Response) => {

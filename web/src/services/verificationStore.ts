@@ -23,17 +23,45 @@ export interface VerifySession {
   passNumber: number | null;
   passCount: number;
   promptId: number;
+  /** When this browser was last opened automatically. Stops a second automatic open in the same window. */
+  autoPromptedAt?: number;
   ip: string;
   location: string;
   os: string;
   userAgent: string;
   page: string;
+  /** False once the visitor leaves the page or hides the tab. */
+  visible?: boolean;
 }
 
 const sessions = new Map<string, VerifySession>();
 let nextPassNumber = 1;
-/** A browser drops off the list after it stops checking in. Long enough that a background tab can wake and check in again. */
-const ACTIVE_MS = 90_000;
+/** A browser drops off the list after it stops checking in. Short so a closed page does not stay on the list. */
+const ACTIVE_MS = 12_000;
+/** After a pass, automatic mode waits this long before opening the check again. The admin can change it. */
+const DEFAULT_AGAIN_MS = 24 * 60 * 60 * 1000;
+const MIN_AGAIN_MS = 5_000;
+const MAX_AGAIN_MS = 30 * 24 * 60 * 60 * 1000;
+
+export type PromptMode = "manual" | "automatic";
+let promptMode: PromptMode = "manual";
+let autoAgainMs = DEFAULT_AGAIN_MS;
+
+export function getPromptMode(): PromptMode {
+  return promptMode;
+}
+
+export function setPromptMode(mode: PromptMode) {
+  promptMode = mode;
+}
+
+export function getAutoAgainMs(): number {
+  return autoAgainMs;
+}
+
+export function setAutoAgainMs(ms: number) {
+  autoAgainMs = Math.min(MAX_AGAIN_MS, Math.max(MIN_AGAIN_MS, Math.round(ms)));
+}
 
 export function detectOs(userAgent: string, platformHint = ""): string {
   const hint = platformHint.trim().replace(/^"|"$/g, "");
@@ -162,9 +190,13 @@ export function createSession(input: {
   ip: string;
   userAgent: string;
   platform?: string;
+  /** When this browser last passed. The page remembers this for 24 hours. */
+  passedAt?: number | null;
   page: string;
-}): VerifySession {
+  visible?: boolean;
+}): VerifySession | undefined {
   prune();
+  const visible = input.visible !== false;
   const ip = normalizeIp(input.ip);
   const os = detectOs(input.userAgent, input.platform || "");
   const byClient = [...sessions.values()].find((session) => session.clientId === input.clientId);
@@ -178,6 +210,7 @@ export function createSession(input: {
       sessions.delete(sameMachine.id);
     }
     existing.lastSeenAt = Date.now();
+    existing.visible = visible;
     existing.page = input.page;
     existing.userAgent = input.userAgent;
     if (os !== "Unknown") existing.os = os;
@@ -187,8 +220,10 @@ export function createSession(input: {
     }
     collapseMachine(existing);
     ensureLocation(existing);
-    return existing;
+    if (!visible) return existing;
+    return considerAutoShow(existing, input.passedAt ?? null);
   }
+  if (!visible) return undefined;
   const session: VerifySession = {
     id: crypto.randomUUID(),
     clientId: input.clientId,
@@ -206,10 +241,23 @@ export function createSession(input: {
     os,
     userAgent: input.userAgent,
     page: input.page,
+    visible: true,
   };
   sessions.set(session.id, session);
   ensureLocation(session);
-  return session;
+  return considerAutoShow(session, input.passedAt ?? null);
+}
+
+/** Open once on arrival, then once more after the admin's reopen time. Manual mode never does this. */
+function considerAutoShow(session: VerifySession, passedAt: number | null): VerifySession {
+  if (promptMode !== "automatic") return session;
+  const now = Date.now();
+  const due = passedAt == null || now - passedAt >= autoAgainMs;
+  if (!due) return session;
+  const windowStart = passedAt == null ? 0 : passedAt + autoAgainMs;
+  if (session.autoPromptedAt && session.autoPromptedAt >= windowStart) return session;
+  const opened = showVerification(session.id);
+  return opened || session;
 }
 
 export function getSession(id: string): VerifySession | undefined {
@@ -232,6 +280,7 @@ export function showVerification(id: string): VerifySession | undefined {
   session.checkedAt = undefined;
   session.copiedAt = undefined;
   session.codeSentAt = undefined;
+  session.autoPromptedAt = Date.now();
   return session;
 }
 
@@ -244,7 +293,10 @@ export function listSessions(): VerifySession[] {
     seen.add(key);
     collapseMachine(session);
   }
-  return [...sessions.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+  const now = Date.now();
+  return [...sessions.values()]
+    .filter((session) => session.visible !== false && now - session.lastSeenAt <= ACTIVE_MS)
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
 }
 
 export function markChecked(id: string): VerifySession | undefined {

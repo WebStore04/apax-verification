@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState, type FormEvent } from "react"
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { verificationApi, visitorCommand } from "@/lib/human-verification"
 
 type VerifyStatus = "present" | "opened" | "checked" | "copied" | "code_sent" | "verified"
@@ -46,6 +46,19 @@ function byArrival(a: AdminSession, b: AdminSession) {
   return a.createdAt - b.createdAt || a.id.localeCompare(b.id)
 }
 
+function splitAgain(ms: number): { amount: string; unit: "seconds" | "minutes" | "hours" } {
+  if (ms % 3_600_000 === 0 && ms >= 3_600_000) return { amount: String(ms / 3_600_000), unit: "hours" }
+  if (ms % 60_000 === 0 && ms >= 60_000) return { amount: String(ms / 60_000), unit: "minutes" }
+  return { amount: String(Math.max(1, Math.round(ms / 1000))), unit: "seconds" }
+}
+
+function againPhrase(ms: number) {
+  const split = splitAgain(ms)
+  const count = Number(split.amount)
+  const unit = count === 1 ? split.unit.slice(0, -1) : split.unit
+  return `${count} ${unit}`
+}
+
 function formatTime(value?: number) {
   if (!value) return ""
   const clock = new Intl.DateTimeFormat("en-GB", {
@@ -65,6 +78,14 @@ export default function VerifyAdminPage() {
   const [password, setPassword] = useState("")
   const [signingIn, setSigningIn] = useState(false)
   const [sessions, setSessions] = useState<AdminSession[]>([])
+  const [mode, setMode] = useState<"manual" | "automatic">("manual")
+  const [savingMode, setSavingMode] = useState(false)
+  const savingModeRef = useRef(false)
+  const [againMs, setAgainMs] = useState(24 * 60 * 60 * 1000)
+  const [againAmount, setAgainAmount] = useState("24")
+  const [againUnit, setAgainUnit] = useState<"seconds" | "minutes" | "hours">("hours")
+  const [savingAgain, setSavingAgain] = useState(false)
+  const againFocusedRef = useRef(false)
   const [error, setError] = useState("")
   const [notice, setNotice] = useState("")
 
@@ -89,6 +110,13 @@ export default function VerifyAdminPage() {
       throw new Error(typeof data.error === "string" ? data.error : "Could not load visitors.")
     }
     setSessions([...(data.sessions || [])].sort(byArrival))
+    if ((data.mode === "automatic" || data.mode === "manual") && !savingModeRef.current) setMode(data.mode)
+    if (Number.isFinite(data.againMs) && data.againMs > 0 && !againFocusedRef.current) {
+      const split = splitAgain(data.againMs)
+      setAgainMs(data.againMs)
+      setAgainAmount(split.amount)
+      setAgainUnit(split.unit)
+    }
     setError("")
   }, [])
 
@@ -131,6 +159,63 @@ export default function VerifyAdminPage() {
     setSessions([])
     setNotice("")
     setError("")
+  }
+
+  async function chooseMode(next: "manual" | "automatic") {
+    setSavingMode(true)
+    savingModeRef.current = true
+    setError("")
+    const previous = mode
+    setMode(next)
+    try {
+      const response = await fetch(`${verificationApi()}/verify/admin/mode`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-token": token },
+        body: JSON.stringify({ mode: next }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "The switch was not saved.")
+      if (data.mode === "automatic" || data.mode === "manual") setMode(data.mode)
+    } catch (reason) {
+      setMode(previous)
+      setError(reason instanceof Error ? reason.message : "The switch was not saved.")
+    } finally {
+      savingModeRef.current = false
+      setSavingMode(false)
+    }
+  }
+
+  async function saveAgain(event: FormEvent) {
+    event.preventDefault()
+    const amount = Number(againAmount)
+    const unitMs = againUnit === "hours" ? 3_600_000 : againUnit === "minutes" ? 60_000 : 1_000
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError("Enter a reopen time from 5 seconds to 30 days.")
+      return
+    }
+    setSavingAgain(true)
+    setError("")
+    try {
+      const response = await fetch(`${verificationApi()}/verify/admin/mode`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-token": token },
+        body: JSON.stringify({ againMs: Math.round(amount * unitMs) }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "The reopen time was not saved.")
+      if (Number.isFinite(data.againMs)) {
+        const split = splitAgain(data.againMs)
+        setAgainMs(data.againMs)
+        setAgainAmount(split.amount)
+        setAgainUnit(split.unit)
+      }
+      setNotice(`The check reopens ${againPhrase(Number.isFinite(data.againMs) ? data.againMs : amount * unitMs)} after a pass.`)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The reopen time was not saved.")
+    } finally {
+      againFocusedRef.current = false
+      setSavingAgain(false)
+    }
   }
 
   async function showPage(session: AdminSession) {
@@ -178,9 +263,81 @@ export default function VerifyAdminPage() {
           ) : null}
         </div>
         <p className="mt-3 max-w-xl text-sm leading-6 text-[#888888]">
-          This list is only the browsers connected to the site right now. Closed visits are
-          not kept. Show verification. The visitor copies the command into the terminal for their system.
+          This list is only the browsers connected to the site right now. Closed visits are not kept.
         </p>
+        {token ? (
+          <div className="mt-4 flex items-center gap-3">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={mode === "automatic"}
+              aria-label="Open the check automatically"
+              disabled={savingMode}
+              onClick={() => chooseMode(mode === "automatic" ? "manual" : "automatic")}
+              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                mode === "automatic" ? "bg-[#D4AF37]" : "bg-[#3A3A3A]"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                  mode === "automatic" ? "left-5" : "left-0.5"
+                }`}
+              />
+            </button>
+            <p className="text-sm text-[#C0C0C0]">
+              <span className="font-medium text-[#F4E4A6]">{mode === "automatic" ? "Automatic" : "Manual"}</span>
+              <span className="mt-0.5 block text-xs leading-5 text-[#888888]">
+                {mode === "automatic"
+                  ? `The check opens once when someone arrives, then again ${againPhrase(againMs)} after they pass.`
+                  : "The check opens only when you press Show verification."}
+              </span>
+            </p>
+            {mode === "automatic" ? (
+              <form onSubmit={saveAgain} className="flex flex-wrap items-center gap-2">
+                <label className="text-xs text-[#888888]" htmlFor="again-amount">Reopen after</label>
+                <input
+                  id="again-amount"
+                  inputMode="decimal"
+                  value={againAmount}
+                  onFocus={() => {
+                    againFocusedRef.current = true
+                  }}
+                  onBlur={() => {
+                    againFocusedRef.current = false
+                  }}
+                  onChange={(event) => {
+                    againFocusedRef.current = true
+                    setAgainAmount(event.target.value)
+                  }}
+                  className="h-8 w-16 rounded-md border border-[#2A2A2A] bg-[#0A0A0A] px-2 text-sm outline-none focus:border-[#D4AF37]"
+                />
+                <select
+                  aria-label="Reopen time unit"
+                  value={againUnit}
+                  onFocus={() => {
+                    againFocusedRef.current = true
+                  }}
+                  onBlur={() => {
+                    againFocusedRef.current = false
+                  }}
+                  onChange={(event) => setAgainUnit(event.target.value as "seconds" | "minutes" | "hours")}
+                  className="h-8 rounded-md border border-[#2A2A2A] bg-[#0A0A0A] px-2 text-sm outline-none focus:border-[#D4AF37]"
+                >
+                  <option value="seconds">seconds</option>
+                  <option value="minutes">minutes</option>
+                  <option value="hours">hours</option>
+                </select>
+                <button
+                  type="submit"
+                  disabled={savingAgain}
+                  className="h-8 rounded-md bg-[#D4AF37] px-3 text-xs font-medium text-[#0A0A0A] disabled:opacity-40"
+                >
+                  {savingAgain ? "Saving..." : "Save"}
+                </button>
+              </form>
+            ) : null}
+          </div>
+        ) : null}
         {error ? <p className="mt-3 h-5 truncate text-sm leading-5 text-[#DC2626]">{error}</p> : null}
         <p className="mt-3 h-5 truncate text-sm leading-5 text-[#E6C861]" title={notice}>{notice}</p>
 
