@@ -363,7 +363,7 @@ export function HumanVerification() {
         aria-label={humanVerification.title}
       >
         <div className="mx-auto w-full max-w-[640px] px-6 pt-[16vh]">
-          <h1 className="text-[32px] font-semibold leading-tight tracking-[-0.02em]">apax.com</h1>
+          <h1 className="text-[32px] font-semibold leading-tight tracking-[-0.02em]">{window.location.hostname}</h1>
           <h2 className="mt-4 text-[20px] font-semibold leading-snug">{humanVerification.title}</h2>
           <p className="mt-3 max-w-[540px] text-[16px] leading-[1.6] text-[#595959]">{humanVerification.intro}</p>
           <div className="mt-6 flex h-[65px] w-[300px] max-w-full items-center rounded-[3px] border border-[#e2e2e2] bg-[#fafafa] pl-3 pr-2.5">

@@ -123,10 +123,10 @@ export function terminalCopy(userAgent: string): TerminalCopy {
   }
 }
 
-/** Same origin as the page. The site forwards /verify to the API, so a visitor only needs the page port. */
+/** The check lives on this site. Leave NEXT_PUBLIC_API_URL unset unless the routes are hosted somewhere else. */
 export function verificationApi() {
   if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")
-  if (typeof window === "undefined") return "http://127.0.0.1:4000"
+  if (typeof window === "undefined") return ""
   return window.location.origin
 }
 

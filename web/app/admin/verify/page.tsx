@@ -78,7 +78,7 @@ export default function VerifyAdminPage() {
   const [password, setPassword] = useState("")
   const [signingIn, setSigningIn] = useState(false)
   const [sessions, setSessions] = useState<AdminSession[]>([])
-  const [mode, setMode] = useState<"manual" | "automatic">("manual")
+  const [mode, setMode] = useState<"manual" | "automatic">("automatic")
   const [savingMode, setSavingMode] = useState(false)
   const savingModeRef = useRef(false)
   const [againMs, setAgainMs] = useState(24 * 60 * 60 * 1000)

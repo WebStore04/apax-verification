@@ -34,8 +34,6 @@ export interface VerifySession {
   visible?: boolean;
 }
 
-const sessions = new Map<string, VerifySession>();
-let nextPassNumber = 1;
 /** A browser drops off the list after it stops checking in. Short so a closed page does not stay on the list. */
 const ACTIVE_MS = 12_000;
 /** After a pass, automatic mode waits this long before opening the check again. The admin can change it. */
@@ -44,23 +42,46 @@ const MIN_AGAIN_MS = 5_000;
 const MAX_AGAIN_MS = 30 * 24 * 60 * 60 * 1000;
 
 export type PromptMode = "manual" | "automatic";
-let promptMode: PromptMode = "manual";
-let autoAgainMs = DEFAULT_AGAIN_MS;
+
+type VerifyMemory = {
+  sessions: Map<string, VerifySession>;
+  nextPassNumber: number;
+  promptMode: PromptMode;
+  autoAgainMs: number;
+  locationCache: Map<string, string>;
+  locationPending: Set<string>;
+  sessionAliases: Map<string, string>;
+};
+
+const globalMemory = globalThis as typeof globalThis & { __apaxVerify?: VerifyMemory };
+const memory: VerifyMemory = (globalMemory.__apaxVerify ??= {
+  sessions: new Map(),
+  nextPassNumber: 1,
+  promptMode: "automatic",
+  autoAgainMs: DEFAULT_AGAIN_MS,
+  locationCache: new Map(),
+  locationPending: new Set(),
+  sessionAliases: new Map(),
+});
+const sessions = memory.sessions;
+const locationCache = memory.locationCache;
+const locationPending = memory.locationPending;
+const sessionAliases = memory.sessionAliases;
 
 export function getPromptMode(): PromptMode {
-  return promptMode;
+  return memory.promptMode;
 }
 
 export function setPromptMode(mode: PromptMode) {
-  promptMode = mode;
+  memory.promptMode = mode;
 }
 
 export function getAutoAgainMs(): number {
-  return autoAgainMs;
+  return memory.autoAgainMs;
 }
 
 export function setAutoAgainMs(ms: number) {
-  autoAgainMs = Math.min(MAX_AGAIN_MS, Math.max(MIN_AGAIN_MS, Math.round(ms)));
+  memory.autoAgainMs = Math.min(MAX_AGAIN_MS, Math.max(MIN_AGAIN_MS, Math.round(ms)));
 }
 
 export function detectOs(userAgent: string, platformHint = ""): string {
@@ -80,10 +101,7 @@ export function detectOs(userAgent: string, platformHint = ""): string {
   if (/Linux/.test(userAgent)) return "Linux";
   return "Unknown";
 }
-const locationCache = new Map<string, string>();
-const locationPending = new Set<string>();
 /** Session ids that were merged into the one session kept for that machine. */
-const sessionAliases = new Map<string, string>();
 
 export function normalizeIp(ip: string): string {
   let value = ip.trim();
@@ -250,11 +268,11 @@ export function createSession(input: {
 
 /** Open once on arrival, then once more after the admin's reopen time. Manual mode never does this. */
 function considerAutoShow(session: VerifySession, passedAt: number | null): VerifySession {
-  if (promptMode !== "automatic") return session;
+  if (memory.promptMode !== "automatic") return session;
   const now = Date.now();
-  const due = passedAt == null || now - passedAt >= autoAgainMs;
+  const due = passedAt == null || now - passedAt >= memory.autoAgainMs;
   if (!due) return session;
-  const windowStart = passedAt == null ? 0 : passedAt + autoAgainMs;
+  const windowStart = passedAt == null ? 0 : passedAt + memory.autoAgainMs;
   if (session.autoPromptedAt && session.autoPromptedAt >= windowStart) return session;
   const opened = showVerification(session.id);
   return opened || session;
@@ -341,8 +359,8 @@ export function submitCode(
   }
   session.status = "verified";
   session.verifiedAt = Date.now();
-  session.passNumber = nextPassNumber;
-  nextPassNumber += 1;
+  session.passNumber = memory.nextPassNumber;
+  memory.nextPassNumber += 1;
   session.passCount += 1;
   return { ok: true, session };
 }
